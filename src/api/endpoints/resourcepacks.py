@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from db.session import get_db, get_s3_client
 from db.models import Resourcepack
-from api.models import ResourcepackIn, ResourcepackOut
+from api.models.resourcepacks import ResourcepackIn, ResourcepackOut
 
 
 router = APIRouter()

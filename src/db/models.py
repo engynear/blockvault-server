@@ -10,9 +10,6 @@ class Model(Base):
     name = Column(String, nullable=False)
     type = Column(String, nullable=False)
     description = Column(Text)
-    preview_image_path = Column(String)
-    bbmodel_file_path = Column(String)
-    json_file_path = Column(String)
     tags = Column(ARRAY(String))
 
 
@@ -22,7 +19,6 @@ class Sound(Base):
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     name = Column(String, index=True)
     description = Column(Text)
-    sound_file_path = Column(String)
 
 
 class Map(Base):
@@ -32,7 +28,6 @@ class Map(Base):
     name = Column(String, index=True)
     version = Column(String)
     description = Column(Text)
-    map_file_path = Column(String)
 
 class Resourcepack(Base):
     __tablename__ = "resourcepacks"
@@ -41,4 +36,3 @@ class Resourcepack(Base):
     name = Column(String, index=True)
     version = Column(String)
     description = Column(Text)
-    resourcepack_file_path = Column(String)

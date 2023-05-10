@@ -2,31 +2,6 @@ from typing import List
 from pydantic import BaseModel
 from db.models import Model
 
-class ModelIn(BaseModel):
-    name: str
-    type: str
-    description: str = None
-    preview_image_path: str = None
-    bbmodel_file_path: str = None
-    json_file_path: str = None
-    tags: List[str] = []
-
-    class Config:
-        orm_mode = True
-
-class ModelOut(BaseModel):
-    id: int
-    name: str
-    type: str
-    description: str = None
-    preview_image_path: str = None
-    bbmodel_file_path: str = None
-    json_file_path: str = None
-    tags: List[str] = []
-
-    class Config:
-        orm_mode = True
-
 class ResourcepackModelItem(BaseModel):
     model_id: int
     change_type: str

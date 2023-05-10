@@ -6,13 +6,14 @@ from sqlalchemy.orm import Session
 
 from db.session import get_db, get_s3_client
 from db.models import Model
-from api.models import ModelIn, ModelOut
+from api.models.models import ModelIn, ModelOut
 
+models_preview_placeholder = 'models-preview-placeholder.png'
 
 router = APIRouter()
 
 @router.get("", response_model=List[ModelOut])
-async def get_models(skip: int = 0, limit: int = 100, db: Session = Depends(get_db)):
+async def get_models(skip: int = 0, limit: int = None, db: Session = Depends(get_db)):
     models = db.query(Model).offset(skip).limit(limit).all()
     return models
 
@@ -20,23 +21,22 @@ async def get_models(skip: int = 0, limit: int = 100, db: Session = Depends(get_
 async def get_model(model_id: int, db: Session = Depends(get_db)):
     model = db.query(Model).filter(Model.id == model_id).first()
     if not model:
-        raise HTTPException(status_code=404, detail="Model not found")
+        raise HTTPException(status_code=404, detail=f'Model {model_id} not found')
     return model
 
-@router.delete("/{model_id}")
-async def delete_model(model_id: int, db: Session = Depends(get_db)):
-    model = db.query(Model).filter(Model.id == model_id).first()
-    if not model:
-        raise HTTPException(status_code=404, detail="Model not found")
-    db.delete(model)
+@router.post("", response_model=ModelOut)
+async def create_model(model: ModelIn, db: Session = Depends(get_db)):
+    db_model = Model(**model.dict())
+    db.add(db_model)
     db.commit()
-    return {"message": "Model deleted"}
+    db.refresh(db_model)
+    return db_model
 
-@router.put("/{model_id}", response_model=ModelIn)
+@router.put("/{model_id}", response_model=ModelOut)
 async def update_model(model_id: int, model: ModelIn, db: Session = Depends(get_db)):
     db_model = db.query(Model).filter(Model.id == model_id).first()
     if not db_model:
-        raise HTTPException(status_code=404, detail="Model not found")
+        raise HTTPException(status_code=404, detail=f'Model {model_id} not found')
     update_data = model.dict(exclude_unset=True)
     for key, value in update_data.items():
         setattr(db_model, key, value)
@@ -45,80 +45,99 @@ async def update_model(model_id: int, model: ModelIn, db: Session = Depends(get_
     db.refresh(db_model)
     return db_model
 
-@router.post("", response_model=ModelIn)
-async def create_model(model: ModelIn, db: Session = Depends(get_db)):
-    db_model = Model(**model.dict())
-    db.add(db_model)
+@router.delete("/{model_id}")
+async def delete_model(model_id: int, db: Session = Depends(get_db), s3 = Depends(get_s3_client)):
+    model = db.query(Model).filter(Model.id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail=f'Model {model_id} not found')
+
+    bucket_name = 'blockvault-bucket'
+    objects = s3.list_objects(Bucket=bucket_name, Prefix=f'models/model_{model_id}')
+    if 'Contents' in objects:
+        for obj in objects['Contents']:
+            s3.delete_object(Bucket=bucket_name, Key=obj['Key'])
+
+    db.delete(model)
     db.commit()
-    db.refresh(db_model)
-    return db_model
+    return {"message": f'Model {model_id} deleted'}
 
-@router.post("/files/bbmodel")
-async def upload_bbmodel_file(file: UploadFile = File(...), s3 = Depends(get_s3_client)):
-    objects = s3.list_objects(Bucket='model-files')
-    async def check_name_available(contents):
-        import re
-        if file.filename in [obj['Key'] for obj in contents]:
-            file.filename, extension = file.filename.split('.')
-            print(file.filename)
-            if re.search(r'_\d+$', file.filename):
-                i = file.filename.split('_')[-1]
-                file.filename = file.filename[:-len(i)] + str(int(i) + 1)
-            else:
-                file.filename += '_1'
-            file.filename += f'.{extension}'
-            await check_name_available(contents)
-
-    if objects.get('Contents'):
-        objects = objects['Contents']
-        try:
-            await check_name_available(objects)
-        except Exception as e:
-            print(e)
-            raise HTTPException(status_code=500, detail="Something went wrong")
-
+@router.get("/{model_id}/preview-image")
+async def get_model_preview_image(model_id: int, db: Session = Depends(get_db), s3 = Depends(get_s3_client)):
+    model = db.query(Model).filter(Model.id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail=f'Model {model_id} not found')
+    
+    bucket_name = 'blockvault-bucket'
     try:
-        s3.upload_fileobj(file.file, 'model-files', file.filename)
+        image = s3.get_object(Bucket=bucket_name, Key=f'models/model_{model_id}/preview.png')
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Problem uploading file to S3")
+        with open(f'src/api/static/{models_preview_placeholder}', 'rb') as f:
+            return Response(content=f.read(), media_type="image/png")
+    return Response(content=image['Body'].read(), media_type="image/png")
 
-    return {"file_path": file.filename, "bucket": "model-files"}
+@router.post("/{model_id}/preview-image")
+async def upload_model_preview_image(model_id: int, file: UploadFile = File(...), db: Session = Depends(get_db), s3 = Depends(get_s3_client)):
+    model = db.query(Model).filter(Model.id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail=f'Model {model_id} not found')
+    
+    if file.content_type != 'image/png':
+        raise HTTPException(status_code=400, detail=f'Preview image must be a png file')
 
-@router.post("/files/modelpreview")
-async def upload_modelpreview_file(file: UploadFile = File(...), s3 = Depends(get_s3_client)):
-    objects = s3.list_objects(Bucket='model-previews')
-    async def check_name_available(contents):
-        import re
-        if file.filename in [obj['Key'] for obj in contents]:
-            file.filename, extension = file.filename.split('.')
-            print(file.filename)
-            if re.search(r'_\d+$', file.filename):
-                i = file.filename.split('_')[-1]
-                file.filename = file.filename[:-len(i)] + str(int(i) + 1)
-            else:
-                file.filename += '_1'
-            file.filename += f'.{extension}'
-            await check_name_available(contents)
+    bucket_name = 'blockvault-bucket'
+    s3.put_object(Bucket=bucket_name, Key=f'models/model_{model_id}/preview.png', Body=file.file.read())
+    return {"message": f'Preview image for model {model_id} uploaded'}
 
-    if objects.get('Contents'):
-        objects = objects['Contents']
-        try:
-            await check_name_available(objects)
-        except Exception as e:
-            print(e)
-            raise HTTPException(status_code=500, detail="Something went wrong")
 
+@router.put("/{model_id}/preview-image")
+async def update_model_preview_image(model_id: int, file: UploadFile = File(...), db: Session = Depends(get_db), s3 = Depends(get_s3_client)):
+    model = db.query(Model).filter(Model.id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail=f'Model {model_id} not found')
+    
+    if file.content_type != 'image/png':
+        raise HTTPException(status_code=400, detail=f'Preview image must be a png file')
+
+    bucket_name = 'blockvault-bucket'
+    s3.put_object(Bucket=bucket_name, Key=f'models/model_{model_id}/preview.png', Body=file.file.read())
+    return {"message": f'Preview image for model {model_id} updated'}
+
+@router.get("/{model_id}/project")
+async def get_bbmodel_file(model_id: int, db: Session = Depends(get_db), s3 = Depends(get_s3_client)):
+    model = db.query(Model).filter(Model.id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail=f'Model {model_id} not found')
+    
+    bucket_name = 'blockvault-bucket'
     try:
-        s3.upload_fileobj(file.file, 'model-previews', file.filename)
+        file = s3.get_object(Bucket=bucket_name, Key=f'models/model_{model_id}/project.bbmodel')
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Problem uploading file to S3")
+        print(e)
+        raise HTTPException(status_code=404, detail=f'BBModel file for model {model_id} not found')
+    return Response(content=file['Body'].read(), media_type="application/octet-stream")
 
-    return {"file_path": file.filename, "bucket": "model-previews"}
+@router.post("/{model_id}/project")
+async def upload_bbmodel_file(model_id: int, file: UploadFile = File(...), db: Session = Depends(get_db), s3 = Depends(get_s3_client)):
+    model = db.query(Model).filter(Model.id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail=f'Model {model_id} not found')
+    
+    if file.content_type != 'application/octet-stream' or not file.filename.endswith('.bbmodel'):
+        raise HTTPException(status_code=400, detail=f'Project file must be a bbmodel file')
 
-@router.get("/files/modelpreview/{file_path}")
-async def get_modelpreview_file(file_path: str, s3 = Depends(get_s3_client)):
-    try:
-        obj = s3.get_object(Bucket='model-previews', Key=file_path)
-        return Response(content=obj['Body'].read(), media_type="image/png")
-    except Exception as e:
-        raise HTTPException(status_code=404, detail="File not found")
+    bucket_name = 'blockvault-bucket'
+    s3.put_object(Bucket=bucket_name, Key=f'models/model_{model_id}/project.bbmodel', Body=file.file.read())
+    return {"message": f'BBModel file for model {model_id} uploaded'}
+
+@router.put("/{model_id}/project")
+async def update_bbmodel_file(model_id: int, file: UploadFile = File(...), db: Session = Depends(get_db), s3 = Depends(get_s3_client)):
+    model = db.query(Model).filter(Model.id == model_id).first()
+    if not model:
+        raise HTTPException(status_code=404, detail=f'Model {model_id} not found')
+    
+    if file.content_type != 'application/octet-stream' or not file.filename.endswith('.bbmodel'):
+        raise HTTPException(status_code=400, detail=f'Project file must be a bbmodel file')
+
+    bucket_name = 'blockvault-bucket'
+    s3.put_object(Bucket=bucket_name, Key=f'models/model_{model_id}/project.bbmodel', Body=file.file.read())
+    return {"message": f'BBModel file for model {model_id} updated'}
