@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from db.base import Base, create_s3_buckets
 from db.models import Model, Sound, Map
 
-from api.endpoints import models, resourcepacks
+from api.endpoints import models, resourcepacks, sounds
 from core.config import settings
 
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +27,7 @@ app.add_middleware(
 
 app.include_router(models.router, prefix="/models", tags=["models"])
 app.include_router(resourcepacks.router, prefix="/resourcepacks", tags=["resourcepacks"])
+app.include_router(sounds.router, prefix="/sounds", tags=["sounds"])
 
 @app.get("/")
 async def root():
