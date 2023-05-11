@@ -10,6 +10,7 @@ class ResourcepackModelItem(BaseModel):
 
 class ResourcePackSoundItem(BaseModel):
     sound_id: int
+    sound_name: str
 
 class ResourcepackIn(BaseModel):
     name: str
@@ -27,8 +28,8 @@ class ResourcepackOut(BaseModel):
     version: str
     description: str = None
     resourcepack_file_path: str = None
-    models_id: int = None
-    sounds_id: int = None
+    models: List[ResourcepackModelItem] = []
+    sounds: List[ResourcePackSoundItem] = []
 
     class Config:
         orm_mode = True
