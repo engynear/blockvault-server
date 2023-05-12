@@ -37,11 +37,11 @@ async def upload_sound_clip(sound_id: int, file: UploadFile = File(...), db: Ses
     if not sound:
         raise HTTPException(status_code=404, detail=f'Sound {sound_id} not found')
     
-    if not file.filename.lower().endswith('.wav'):
-        raise HTTPException(status_code=400, detail='Sound clip must be a WAV file')
+    if not file.filename.lower().endswith('.ogg'):
+        raise HTTPException(status_code=400, detail='Sound clip must be a ogg file')
     
     bucket_name = 'blockvault-bucket'
-    s3_key = f'sounds/sound_{sound_id}.wav'
+    s3_key = f'sounds/sound_{sound_id}.ogg'
     s3.put_object(Bucket=bucket_name, Key=s3_key, Body=await file.read())
     
     return sound
@@ -53,11 +53,21 @@ async def get_sound_clip(sound_id: int, db: Session = Depends(get_db), s3 = Depe
         raise HTTPException(status_code=404, detail=f'Sound {sound_id} not found')
     
     bucket_name = 'blockvault-bucket'
-    s3_key = f'sounds/sound_{sound_id}.wav'
+    s3_key = f'sounds/sound_{sound_id}.ogg'
     
     try:
         response = s3.get_object(Bucket=bucket_name, Key=s3_key)
         clip_data = response['Body'].read()
-        return Response(content=clip_data, media_type='audio/wav')
+        return Response(content=clip_data, media_type='audio/ogg')
     except Exception as e:
         raise HTTPException(status_code=404, detail=f'Sound clip for sound {sound_id} not found')
+
+@router.delete("/{sound_id}")
+async def delete_sound(sound_id: int, db: Session = Depends(get_db)):
+    sound = db.query(Sound).filter(Sound.id == sound_id).first()
+    if not sound:
+        raise HTTPException(status_code=404, detail=f'Sound {sound_id} not found')
+    
+    db.delete(sound)
+    db.commit()
+    return {'message': f'Sound {sound_id} deleted'}
