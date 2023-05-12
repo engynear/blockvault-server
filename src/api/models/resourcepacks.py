@@ -1,6 +1,7 @@
 from typing import List
 from pydantic import BaseModel
-from db.models import Model
+from api.models.models import ModelOut
+from api.models.sounds import SoundOut
 
 class ResourcepackModelItem(BaseModel):
     model_id: int
@@ -28,8 +29,8 @@ class ResourcepackOut(BaseModel):
     version: str
     description: str = None
     resourcepack_file_path: str = None
-    models: List[ResourcepackModelItem] = []
-    sounds: List[ResourcePackSoundItem] = []
+    models: List[ModelOut] = []
+    sounds: List[SoundOut] = []
 
     class Config:
         orm_mode = True

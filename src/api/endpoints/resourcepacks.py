@@ -9,10 +9,20 @@ from db.session import get_db, get_s3_client
 from db.models import Resourcepack, Model, Sound
 from api.models.resourcepacks import ResourcepackIn, ResourcepackOut, ResourcepackModelItem, ResourcePackSoundItem
 from api.models.sounds import SoundIn, SoundOut
+import os
+import shutil
+import zipfile
+import json
 
+models_preview_placeholder = 'models-preview-placeholder.png'
+RESOURCEPACKS_DIR = 'src/api/temp/'
 
 router = APIRouter()
 
+@router.get("", response_model=List[ResourcepackOut])
+async def get_resourcepacks(db: Session = Depends(get_db)):
+    resourcepacks = db.query(Resourcepack).all()
+    return resourcepacks
 
 @router.get("/{resourcepack_id}", response_model=ResourcepackOut)
 async def get_resourcepack(resourcepack_id: int, db: Session = Depends(get_db)):
@@ -21,10 +31,26 @@ async def get_resourcepack(resourcepack_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Resourcepack not found")
     return resourcepack
 
+@router.get("/{resourcepack_id}/preview-image")
+async def get_resourcepack_preview_image(resourcepack_id: int, db: Session = Depends(get_db)):
+    resourcepack = db.query(Resourcepack).filter(Resourcepack.id == resourcepack_id).first()
+    if not resourcepack:
+        raise HTTPException(status_code=404, detail="Resourcepack not found")
+
+    with open(f'src/api/static/{models_preview_placeholder}', 'rb') as f:
+        return Response(content=f.read(), media_type="image/png")
+
 
 @router.post("", response_model=ResourcepackOut)
 async def create_resourcepack(resourcepack: ResourcepackIn, db: Session = Depends(get_db)):
     try:
+        print(f'Creating resourcepack: {resourcepack.name}')
+        if resourcepack.name is None or resourcepack.name == "":
+            raise HTTPException(status_code=400, detail="Resourcepack name cannot be empty")
+
+        if resourcepack.version is None or resourcepack.version == "":
+            raise HTTPException(status_code=400, detail="Resourcepack version cannot be empty")
+
         new_resourcepack = Resourcepack(
             name=resourcepack.name,
             version=resourcepack.version,
@@ -34,11 +60,15 @@ async def create_resourcepack(resourcepack: ResourcepackIn, db: Session = Depend
         models = db.query(Model).filter(Model.id.in_([model.model_id for model in resourcepack.models])).all()
         sounds = db.query(Sound).filter(Sound.id.in_([sound.sound_id for sound in resourcepack.sounds])).all()
 
+        print("query complete")
+
         if len(models) != len(resourcepack.models) or len(sounds) != len(resourcepack.sounds):
             raise HTTPException(status_code=404, detail="One or more models or sounds not found")
 
+        print("models and sounds found")
         # Add models to the resourcepack and set additional fields
         for model_item in resourcepack.models:
+            print(model_item.model_id)
             model_in_db = next((model for model in models if model.id == model_item.model_id), None)
             if model_in_db is not None:
                 new_resourcepack.models.append(model_in_db)
@@ -274,3 +304,60 @@ async def delete_sound_from_resourcepack(resourcepack_id: int, sound_id: int, db
     db.refresh(resourcepack)
 
     return resourcepack
+
+# Сбор ресурсов ---------------------------------------------------------
+@router.get("/{resourcepack_id}/file")
+async def get_resourcepack(resourcepack_id: int, db: Session = Depends(get_db)):
+    resourcepack = db.query(Resourcepack).filter(Resourcepack.id == resourcepack_id).first()
+    if not resourcepack:
+        raise HTTPException(status_code=404, detail="Resourcepack not found")
+
+    resourcepack_dir = os.path.join(RESOURCEPACKS_DIR, str(resourcepack.id))
+    if not os.path.exists(resourcepack_dir):
+        os.mkdir(resourcepack_dir)
+
+    assets_dir = os.path.join(resourcepack_dir, 'assets')
+    minecraft_dir = os.path.join(assets_dir, 'minecraft')
+    textures_dir = os.path.join(minecraft_dir, 'textures')
+    models_dir = os.path.join(minecraft_dir, 'models')
+    custom_dir = os.path.join(assets_dir, 'custom')
+
+    os.makedirs(textures_dir, exist_ok=True)
+    os.makedirs(models_dir, exist_ok=True)
+    os.makedirs(custom_dir, exist_ok=True)
+
+    # Create pack.mcmeta
+    pack_mcmeta_path = os.path.join(resourcepack_dir, 'pack.mcmeta')
+    pack_mcmeta_content = {
+        "pack": {
+            "pack_format": 9,
+            "description": resourcepack.description
+        }
+    }
+
+    with open(pack_mcmeta_path, 'w') as pack_mcmeta_file:
+        json.dump(pack_mcmeta_content, pack_mcmeta_file)
+
+    for model in resourcepack.models:
+        model_dir = os.path.join(models_dir, model.name)
+        os.makedirs(model_dir, exist_ok=True)
+        texture_dir = os.path.join(textures_dir, model.name)
+        os.makedirs(texture_dir, exist_ok=True)
+
+
+    for sound in resourcepack.sounds:
+        # Generate or copy sound files to the custom directory
+        sound_dir = os.path.join(custom_dir, sound.name)
+        os.makedirs(sound_dir, exist_ok=True)
+
+
+    zip_file_path = os.path.join(resourcepack_dir, 'resourcepack.zip')
+
+    with zipfile.ZipFile(zip_file_path, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for root, _, files in os.walk(resourcepack_dir):
+            for file in files:
+                file_path = os.path.join(root, file)
+                rel_path = os.path.relpath(file_path, resourcepack_dir)
+                zip_file.write(file_path, rel_path)
+
+    return Response(zip_file_path)
